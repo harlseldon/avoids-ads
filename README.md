@@ -232,6 +232,70 @@ sin tocar ficheros:
 sudo resolvectl dns wlan0 1.1.1.1
 ```
 
+## Listas de bloqueo
+
+| Lista | Dominios | Para qué |
+|---|---|---|
+| StevenBlack/hosts | ~82 k | la de fábrica de Pi-hole |
+| HaGeZi **Multi PRO** | ~224 k | anuncios, rastreo y telemetría |
+| HaGeZi **TIF Medium** | ~360 k | phishing y malware |
+
+**Total: 608 716 dominios únicos.**
+
+Se eligieron así a propósito: una lista generalista buena y una de seguridad,
+en vez de amontonar diez que se solapan. Con listas repetidas es imposible saber
+cuál rompió un sitio, y el bloqueo no mejora — solo se hace más difícil de
+depurar. HaGeZi es hoy el estándar de facto y publica por niveles; **PRO** es el
+recomendado para una casa técnica. Si algo se rompe, el escalón de abajo es
+`adblock/multi.txt` (Multi NORMAL): se cambia la URL de la lista y se relanza
+`pihole -g`.
+
+Formato **adblock** (no `domains`/`wildcard`): es el que HaGeZi recomienda para
+Pi-hole.
+
+### Bloqueos manuales
+
+`calient.mx` y `caliente.mx`, ambos como comodín, así que cubren subdominios
+(`apuestas.caliente.mx` también cae). Se bloquearon los dos porque el corto
+`calient.mx` es el que aparece en los anuncios y el largo es el sitio de
+apuestas. Para quitar uno:
+
+```bash
+docker exec pihole pihole --regex --delete '(\.|^)calient\.mx$'
+```
+
+### Verificación de falsos positivos
+
+Tras ampliar las listas se comprobaron bancos mexicanos (Nu, BBVA, Banorte,
+Santander), `sat.gob.mx`, `gob.mx`, tus dominios, el stack de Jellyfin
+(TMDB, Letterboxd, 1337x, apibay, EZTV, OpenSubtitles, Subdl) y uso diario
+(Mercado Libre, Amazon, Netflix, MUBI, WhatsApp, GitHub). **Ninguno bloqueado.**
+
+Cuidado al comprobar: una respuesta vacía **no** significa bloqueo. `harlseldon.com`
+y `yts.mx` devuelven vacío, pero también desde Cloudflare — simplemente no tienen
+registro A. La comprobación buena es comparar Pi-hole contra un resolver externo,
+o mirar el `status` en la base de FTL (1 = gravity, 4 = regex, 2 = permitido).
+
+## Ruido de DNSSEC en los avisos
+
+Pi-hole muestra dos avisos recurrentes:
+
+```
+limit exceeded: per-query subqueries
+validation of 168.192.in-addr.arpa failed: resource limit exceeded
+```
+
+Vienen del **conditional forwarding** (`FTLCONF_dns_revServers`): cada búsqueda
+inversa de una IP privada genera una consulta a `168.192.in-addr.arpa` — hay 366
+registradas — y DNSSEC intenta validar una zona que no está firmada, agotando el
+presupuesto de trabajo que dnsmasq impone desde las mitigaciones de KeyTrap
+(CVE-2023-50387).
+
+Son avisos, no fallos: no rompen la resolución. Y desaparecen solos al pasar el
+DHCP a `dnsmasq`, porque entonces la tabla de clientes del ONT se queda vacía y
+el conditional forwarding deja de tener sentido — se quita `revServers` y se
+acabó el ruido.
+
 ## Ideas para más adelante
 
 - **Estadísticas por cliente.** En bridge, los clientes de la misma /24 sí
