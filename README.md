@@ -129,6 +129,14 @@ sudo ufw route allow in on tailscale0 to any port 53 proto tcp
 La forma `route` (FORWARD) es la que importa; un `ufw allow` normal (INPUT) no
 cubre este camino. Es el mismo detalle que ya apareció con Jellyfin en el 8096.
 
+> **Hecho el 2026-08-23.** Al verificarlo apareció que ya existía una regla
+> previa `route:allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0`
+> (`-A ufw-user-forward -i tailscale0 -j ACCEPT`), que abre **todos** los
+> puertos de contenedor a cualquier peer del tailnet — así que el 53 ya estaba
+> permitido y las dos reglas de arriba son redundantes. Se dejan porque son
+> explícitas y autodocumentadas. Esa regla global conviene revisarla: es mucho
+> más ancha de lo que pide este stack.
+
 Si la LAN aún así no llegara, añadir por si acaso — en el caso de Jellyfin hizo
 falta, probablemente por el userland-proxy de Docker, que desvía parte del
 tráfico por INPUT en vez de FORWARD:
