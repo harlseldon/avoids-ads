@@ -91,26 +91,51 @@ dominio normal            github.com        → 140.82.112.3     ✓
 anuncio bloqueado         doubleclick.net   → 0.0.0.0          ✓
 DNSSEC válido             cloudflare.com    → flags: ... ad    ✓
 DNSSEC roto rechazado     dnssec-failed.org → SERVFAIL         ✓
-vía Tailscale             example.com       → responde         ✓
+vía Tailscale*            example.com       → responde         ✓
 systemd-resolved intacto  host resuelve solo                   ✓
 stack jellyfin intacto                                          ✓
 ```
+
+\* Probado desde un contenedor, cuyo origen es `172.x`: confirma que Pi-hole
+responde en la IP de Tailscale, **no** que un peer remoto atraviese el firewall.
+Eso depende del paso 1 y hay que comprobarlo desde otro dispositivo del tailnet.
 
 ## Pendiente — pasos manuales fuera de este repo
 
 Sin esto Pi-hole funciona pero **nadie lo usa todavía**.
 
-**1. Abrir el 53 en ufw.** ufw está activo en este equipo:
+**1. Abrir el 53 en ufw.** ufw está activo. Leyendo la cadena `DOCKER-USER`
+de `/etc/ufw/after.rules`, el tráfico hacia un puerto publicado por Docker se
+resuelve así:
+
+```
+-A DOCKER-USER -j ufw-user-forward          ← aquí entran las reglas `ufw route`
+...
+-A DOCKER-USER -j RETURN -s 192.168.0.0/16  ← la LAN pasa sola
+-A DOCKER-USER -j ufw-docker-logging-deny -m conntrack --ctstate NEW -d 172.16.0.0/12
+```
+
+Es decir: **los clientes de la LAN ya están permitidos** por la regla `RETURN`
+de `192.168.0.0/16`. En cambio el tailnet usa `100.64.0.0/10`, que no encaja en
+ninguna de las tres `RETURN`, así que cae en la regla de `DROP` hacia
+`172.16.0.0/12` — donde vive el contenedor. **Los peers de Tailscale se
+descartan salvo que se añada una regla `route`:**
+
+```bash
+sudo ufw route allow in on tailscale0 to any port 53 proto udp
+sudo ufw route allow in on tailscale0 to any port 53 proto tcp
+```
+
+La forma `route` (FORWARD) es la que importa; un `ufw allow` normal (INPUT) no
+cubre este camino. Es el mismo detalle que ya apareció con Jellyfin en el 8096.
+
+Si la LAN aún así no llegara, añadir por si acaso — en el caso de Jellyfin hizo
+falta, probablemente por el userland-proxy de Docker, que desvía parte del
+tráfico por INPUT en vez de FORWARD:
 
 ```bash
 sudo ufw allow from 192.168.100.0/24 to any port 53 comment 'Pi-hole DNS LAN'
-sudo ufw route allow in on tailscale0 to any port 53
 ```
-
-La forma `route` es necesaria para el tailnet: la integración `ufw-docker` de
-`/etc/ufw/after.rules` descarta las conexiones reenviadas hacia subredes de
-contenedores salvo que el origen sea la LAN. Es el mismo detalle que ya apareció
-con Jellyfin en el 8096.
 
 **2. Reservar la IP del servidor en el router.**
 `192.168.100.7` es una **concesión DHCP**, no una IP estática (`ip route` la
