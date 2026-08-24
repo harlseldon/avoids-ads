@@ -1,0 +1,32 @@
+# Upstream cifrado para Pi-hole.
+#
+# dnsmasq (el motor DNS de Pi-hole) no habla DoT ni DoH, así que este CoreDNS
+# hace de traductor: recibe DNS plano de Pi-hole y lo reenvía a Cloudflare por
+# TLS en el puerto 853.
+#
+# Esto es lo que neutraliza el secuestro de DNS del ISP: en DoT el servidor se
+# autentica con certificado, así que un intermediario no puede hacerse pasar por
+# Cloudflare. Si alguien lo intentara, la conexión falla de forma visible en vez
+# de devolver respuestas manipuladas en silencio.
+#
+# Los upstreams van por IP con tls_servername explícito: así este contenedor no
+# necesita resolver ningún nombre para arrancar (sin problema del huevo y la
+# gallina con Pi-hole).
+
+.:5053 {
+    forward . tls://1.1.1.1 tls://1.0.0.1 {
+        tls_servername cloudflare-dns.com
+        policy sequential
+        health_check 10s
+    }
+
+    # Caché propia además de la de Pi-hole: si CoreDNS se reinicia por una
+    # actualización, las respuestas calientes siguen disponibles.
+    cache 300
+
+    # Aborta si detecta un bucle de reenvío (p. ej. si alguien apuntara el
+    # upstream a Pi-hole por error).
+    loop
+
+    errors
+}

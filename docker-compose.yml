@@ -1,0 +1,121 @@
+# Pi-hole + DNS-over-HTTPS — bloqueo de anuncios para toda la LAN
+# Proyecto: avoids-ads
+#
+# --- Por qué esta arquitectura (ver README.md para el detalle) ---
+#
+# 1. Red bridge, NO host y NO macvlan.
+#    · macvlan daría a Pi-hole su propia IP en la LAN (lo ideal), pero esta
+#      máquina sale por wlan0 y 802.11 no admite varias MAC por estación.
+#    · host chocaría con el stub de systemd-resolved, que ya ocupa el :53.
+#
+# 2. Los puertos se publican en IPs concretas, nunca en 0.0.0.0. Así el :53 no
+#    compite con systemd-resolved (127.0.0.53 / 127.0.0.54 / 172.17.0.1) y no
+#    quedamos expuestos como open resolver.
+#
+# 3. Upstream cifrado (DoT) y no UDP/53 directo. Se comprobó que el ISP secuestra
+#    todo el puerto 53 saliente (una consulta a 192.0.2.1 responde), y su
+#    resolver borra los RRSIG, lo que rompía DNSSEC con SERVFAIL en todo.
+#    Sobre TLS el secuestro no aplica (el servidor se autentica con certificado): DNSSEC vuelve a funcionar y el ISP
+#    deja de ver y de poder manipular cada consulta de la casa.
+#
+# 4. Config por variables FTLCONF_*: método recomendado en v6 y reproducible
+#    desde git. Lo fijado aquí queda de SOLO LECTURA en la web — para cambiarlo
+#    se edita .env y se recrea el contenedor.
+
+name: avoids-ads
+
+services:
+  # Proxy DNS cifrado (DoT). Es el único upstream de Pi-hole y su única razón
+  # de existir es esquivar el secuestro de DNS del ISP. Ver Corefile.
+  #
+  # Nota: NO se usa `cloudflared proxy-dns` — Cloudflare eliminó esa función en
+  # cloudflared 2026.2.0.
+  doh:
+    image: coredns/coredns:1.14.7
+    container_name: avoids-doh
+    restart: unless-stopped
+    command: ["-conf", "/etc/coredns/Corefile"]
+    volumes:
+      - ./Corefile:/etc/coredns/Corefile:ro
+    networks:
+      dns:
+        # IP fija: dnsmasq necesita una IP como upstream, no un nombre.
+        ipv4_address: ${DOH_IP}
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  pihole:
+    # Versión fijada a propósito, no :latest — v6 rompió toda la config de v5 y
+    # un pull ciego puede dejar la casa sin DNS. Actualizar es un cambio de tag.
+    image: pihole/pihole:2026.07.2
+    container_name: pihole
+    hostname: pihole
+    restart: unless-stopped
+    depends_on:
+      - doh
+
+    ports:
+      # --- DNS: solo LAN + Tailscale ---
+      - "${LAN_IP}:53:53/udp"
+      - "${LAN_IP}:53:53/tcp"
+      - "${TS_IP}:53:53/udp"
+      - "${TS_IP}:53:53/tcp"
+      # --- Admin web: loopback + LAN + Tailscale ---
+      # Se deja el :80 del host libre para un futuro reverse proxy.
+      - "127.0.0.1:${ADMIN_PORT}:80/tcp"
+      - "${LAN_IP}:${ADMIN_PORT}:80/tcp"
+      - "${TS_IP}:${ADMIN_PORT}:80/tcp"
+
+    environment:
+      TZ: ${TZ}
+      FTLCONF_webserver_api_password: ${PIHOLE_PASSWORD}
+
+      # Obligatorio en bridge: las consultas llegan vía el gateway de Docker y
+      # sin esto FTL las trata como no-locales y las rechaza.
+      # (Valores válidos: LOCAL | ALL | BIND | NONE — en MAYÚSCULAS.)
+      FTLCONF_dns_listeningMode: 'ALL'
+
+      # Solo HTTP en el 80 interno. Fijarlo evita el fallo conocido del
+      # webserver al intentar abrir el 443/IPv6 por defecto.
+      FTLCONF_webserver_port: '80o'
+
+      # Único upstream: el proxy DoH de aquí al lado.
+      FTLCONF_dns_upstreams: '${DOH_IP}#5053'
+      FTLCONF_dns_dnssec: 'true'
+
+      # Conditional forwarding: pregunta al router por los nombres de la LAN,
+      # así el dashboard muestra "telefono-ana" y no "192.168.100.34".
+      FTLCONF_dns_revServers: 'true,${LAN_SUBNET},${ROUTER_IP},lan'
+
+      # Las respuestas DNSSEC superan los 512 B; 1232 es el tamaño recomendado
+      # por el DNS Flag Day 2020 para no depender de fragmentación IP.
+      FTLCONF_misc_dnsmasq_lines: 'edns-packet-max=1232'
+
+    volumes:
+      # Único volumen necesario en una instalación v6 limpia: BD de consultas,
+      # gravity (listas) y pihole.toml.
+      - ./etc-pihole:/etc/pihole
+
+    cap_add:
+      # Solo prioridad de scheduling. NET_ADMIN a propósito NO está: solo hace
+      # falta si Pi-hole hace de servidor DHCP, y aquí el DHCP lo sigue dando
+      # el router. Mínimo privilegio.
+      - SYS_NICE
+
+    networks:
+      dns:
+        ipv4_address: ${PIHOLE_IP}
+
+    logging: *logging
+
+networks:
+  # Subred propia y fija para poder anclar la IP del proxy DoH.
+  # 172.17/18/19 ya están ocupadas (docker0, jellyfin, etc.).
+  dns:
+    name: avoids-ads_dns
+    ipam:
+      config:
+        - subnet: ${DNS_SUBNET}
