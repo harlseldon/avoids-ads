@@ -18,7 +18,14 @@
 #    Sobre TLS el secuestro no aplica (el servidor se autentica con certificado): DNSSEC vuelve a funcionar y el ISP
 #    deja de ver y de poder manipular cada consulta de la casa.
 #
-# 4. Config por variables FTLCONF_*: método recomendado en v6 y reproducible
+# 4. El DHCP lo sirve `dnsmasq` en un contenedor aparte, no Pi-hole. El DHCP de
+#    Pi-hole habría exigido pasar el contenedor a `network_mode: host`, y eso
+#    obliga a apagar el stub de systemd-resolved del que depende el DNS de
+#    todos los contenedores. Un dnsmasq con `port=0` da lo mismo sin tocar
+#    nada de eso; lo único que se pierde es gestionar las concesiones desde el
+#    panel de Pi-hole.
+#
+# 5. Config por variables FTLCONF_*: método recomendado en v6 y reproducible
 #    desde git. Lo fijado aquí queda de SOLO LECTURA en la web — para cambiarlo
 #    se edita .env y se recrea el contenedor.
 
@@ -46,6 +53,27 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # Servidor DHCP de la casa, en sustitución del que trae el ONT de Totalplay.
+  # El ONT no deja elegir qué DNS reparte (los campos de la interfaz salen
+  # bloqueados por firmware), así que la única forma de que toda la casa use
+  # Pi-hole es repartir las direcciones nosotros. Ver dnsmasq.conf.
+  #
+  # `network_mode: host` es obligatorio: DHCP viaja por broadcast y un
+  # contenedor en `bridge` no lo recibe. No hay choque de puertos porque la
+  # configuración lleva `port=0`, que apaga la parte DNS de dnsmasq — solo
+  # ocupa el 67/udp.
+  dhcp:
+    image: dockurr/dnsmasq:2.93
+    container_name: avoids-dhcp
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./dnsmasq.conf:/etc/dnsmasq.conf:ro
+      - ./dhcp-leases:/var/lib/misc
+    logging: *logging
 
   pihole:
     # Versión fijada a propósito, no :latest — v6 rompió toda la config de v5 y

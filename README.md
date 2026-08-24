@@ -3,6 +3,8 @@
 Bloqueo de anuncios y rastreadores a nivel DNS para la LAN y para el tailnet.
 
 ```
+                    [dnsmasq] ──DHCP──▶ "tu DNS es 192.168.100.7"
+                        │                        │
 cliente LAN ──udp/53──▶ 192.168.100.7 ──▶ [pihole] ──▶ [coredns] ──TLS/853──▶ Cloudflare
                                              │
                                         82 562 dominios
@@ -100,77 +102,88 @@ stack jellyfin intacto                                          ✓
 responde en la IP de Tailscale, **no** que un peer remoto atraviese el firewall.
 Eso depende del paso 1 y hay que comprobarlo desde otro dispositivo del tailnet.
 
-## Pendiente — pasos manuales fuera de este repo
+## El ONT de Totalplay no deja repartir DNS
 
-Sin esto Pi-hole funciona pero **nadie lo usa todavía**.
+El plan original era decirle al router que anunciara `192.168.100.7` como DNS.
+No se puede: en el HG8145X6, `LAN → DHCP Server` tiene **`Primary DNS Server` y
+`Secondary DNS Server` bloqueados**, en gris, y no hay combinación que los
+libere. Se descartó una por una:
 
-**1. Abrir el 53 en ufw.** ufw está activo. Leyendo la cadena `DOCKER-USER`
-de `/etc/ufw/after.rules`, el tráfico hacia un puerto publicado por Docker se
-resuelve así:
+- Con `Enable DHCP Relay` **marcado** — el estado de fábrica — siguen en gris.
+- Con el relay **desmarcado** y el servidor DHCP activo, siguen en gris.
+- Recargando la página a fondo, siguen en gris.
 
-```
--A DOCKER-USER -j ufw-user-forward          ← aquí entran las reglas `ufw route`
-...
--A DOCKER-USER -j RETURN -s 192.168.0.0/16  ← la LAN pasa sola
--A DOCKER-USER -j ufw-docker-logging-deny -m conntrack --ctstate NEW -d 172.16.0.0/12
-```
+La cuenta usada es `root`, así que no es cuestión de permisos de la interfaz.
+La conexión principal es `1_TR069_INTERNET_R_VID_400`: el prefijo `TR069`
+indica que Totalplay la gestiona en remoto por CWMP, así que lo más probable es
+que el bloqueo venga del ACS del ISP o del firmware que ellos publican.
 
-Es decir: **los clientes de la LAN ya están permitidos** por la regla `RETURN`
-de `192.168.0.0/16`. En cambio el tailnet usa `100.64.0.0/10`, que no encaja en
-ninguna de las tres `RETURN`, así que cae en la regla de `DROP` hacia
-`172.16.0.0/12` — donde vive el contenedor. **Los peers de Tailscale se
-descartan salvo que se añada una regla `route`:**
+**De ahí el contenedor `dhcp`.** Si el router no puede decir quién es el DNS de
+la casa, el DHCP lo servimos nosotros.
 
-```bash
-sudo ufw route allow in on tailscale0 to any port 53 proto udp
-sudo ufw route allow in on tailscale0 to any port 53 proto tcp
-```
+## Puesta en marcha
 
-La forma `route` (FORWARD) es la que importa; un `ufw allow` normal (INPUT) no
-cubre este camino. Es el mismo detalle que ya apareció con Jellyfin en el 8096.
+Los tres pasos van en este orden. El único momento delicado es el 2→3, donde la
+red se queda unos segundos sin servidor DHCP; los equipos ya conectados no lo
+notan porque conservan su concesión.
 
-> **Hecho el 2026-08-23.** Al verificarlo apareció que ya existía una regla
-> previa `route:allow any any 0.0.0.0/0 any 0.0.0.0/0 in_tailscale0`
-> (`-A ufw-user-forward -i tailscale0 -j ACCEPT`), que abre **todos** los
-> puertos de contenedor a cualquier peer del tailnet — así que el 53 ya estaba
-> permitido y las dos reglas de arriba son redundantes. Se dejan porque son
-> explícitas y autodocumentadas. Esa regla global conviene revisarla: es mucho
-> más ancha de lo que pide este stack.
-
-Si la LAN aún así no llegara, añadir por si acaso — en el caso de Jellyfin hizo
-falta, probablemente por el userland-proxy de Docker, que desvía parte del
-tráfico por INPUT en vez de FORWARD:
+**1. IP fija para el servidor.** Sin esto, el equipo dependería para su propia
+dirección de un servidor DHCP que es él mismo:
 
 ```bash
-sudo ufw allow from 192.168.100.0/24 to any port 53 comment 'Pi-hole DNS LAN'
+sudo cp 10-wlan0-static.network /etc/systemd/network/
+sudo networkctl reload && sudo networkctl reconfigure wlan0
+ip -4 -o addr show wlan0     # debe seguir siendo 192.168.100.7/24
+ping -c2 192.168.100.1       # y seguir habiendo salida
 ```
 
-**2. Reservar la IP del servidor en el router.**
-`192.168.100.7` es una **concesión DHCP**, no una IP estática (`ip route` la
-marca `proto dhcp`). Si cambia, la casa entera se queda sin DNS. Hay que fijarla
-por reserva DHCP en el router (o dejarla estática en NetworkManager).
+**2. Quitarle el DHCP al ONT.** En `192.168.100.1` → `LAN` → `DHCP Server`,
+desmarcar **`Enable Primary DHCP Server`** y aplicar. Nada más de esa pantalla.
 
-**3. Repartir Pi-hole como DNS.** En el router (192.168.100.1), poner
-`192.168.100.7` como servidor DNS del DHCP.
+**3. Levantar el nuestro:**
 
-> **No pongas un DNS secundario público** (8.8.8.8 y similares). Los clientes no
-> usan el secundario solo cuando el primario falla — lo consultan cuando les
-> conviene, y esas consultas se saltan el filtro. O solo Pi-hole, o nada.
-> El riesgo es real (si esta máquina cae, no hay DNS en casa), pero está
-> acotado: el equipo ya está siempre encendido y el contenedor arranca solo.
+```bash
+docker compose up -d dhcp
+docker logs -f avoids-dhcp    # se ven los DISCOVER/OFFER/ACK en vivo
+```
 
-**4. El agujero de IPv6.** El router anuncia DNS por IPv6 (`fe80::1`) además del
-IPv4, y este equipo de hecho ya lo está usando de forma preferente. **Los
-clientes preferirán el DNS IPv6 del router y se saltarán Pi-hole por completo.**
-Es la causa número uno de "instalé Pi-hole y no bloquea nada". Opciones, de
-mejor a peor:
+Para comprobarlo, reconecta la wifi en un móvil y mira que reciba
+`192.168.100.7` como DNS. Sus consultas deben aparecer en el panel de Pi-hole
+con su IP.
 
-- Que el router anuncie como DNS IPv6 la dirección IPv6 de este equipo.
-- Desactivar IPv6 en el router, si el ISP lo permite.
-- Asumir que el bloqueo será parcial.
+### Volver atrás
 
-Después de tocar el router, comprobar desde un cliente que las consultas
-aparecen en el panel de Pi-hole.
+```bash
+docker compose stop dhcp
+sudo rm /etc/systemd/network/10-wlan0-static.network
+sudo networkctl reload && sudo networkctl reconfigure wlan0
+```
+
+y volver a marcar `Enable Primary DHCP Server` en el ONT.
+
+### Lo que cuesta este montaje
+
+- **Punto único de fallo.** Si este equipo se apaga, la casa se queda sin DNS
+  **y** sin repartir direcciones. Antes el ONT hacía de colchón. Se aceptó a
+  conciencia a cambio de cubrir la casa entera.
+- **Depende de la wifi**, porque este equipo entra por `wlan0`, no por cable.
+- **Los clientes salen como IP, no como nombre**, en el panel de Pi-hole. El
+  conditional forwarding apunta al ONT (`FTLCONF_dns_revServers`) y su tabla de
+  DHCP queda vacía al quitarle el servicio. Para los pocos equipos que importen,
+  lo práctico es darlos de alta a mano en Pi-hole.
+- **IPv6 sigue sin cubrirse.** El ONT continúa anunciando `fe80::1` como DNS por
+  Router Advertisement, que es un mecanismo aparte del DHCP y no se toca desde
+  aquí. Los clientes que prefieran IPv6 se saltarán el filtro. Mirar
+  `LAN → DHCPv6 Server` en el ONT.
+
+### Si Pi-hole se cae y el host se queda sin resolver
+
+El host se reparte a sí mismo Pi-hole como DNS. Para recuperarlo en el momento,
+sin tocar ficheros:
+
+```bash
+sudo resolvectl dns wlan0 1.1.1.1
+```
 
 ## Ideas para más adelante
 

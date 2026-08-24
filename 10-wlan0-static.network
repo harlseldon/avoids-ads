@@ -1,0 +1,27 @@
+# IP fija para el servidor de la casa.
+#
+# Este equipo sirve el DHCP de la LAN (contenedor avoids-dhcp), así que no puede
+# obtener su propia dirección por DHCP: al arrancar, el servidor que la daría
+# todavía no está levantado. Además, Pi-hole se reparte a los clientes como DNS
+# por su IP, y esa IP no puede moverse.
+#
+# Este fichero gana sobre 20-wlan.network por orden lexicográfico: systemd-networkd
+# aplica solo el primer .network que coincide, no los mezcla.
+
+[Match]
+Name=wlan0
+
+[Link]
+RequiredForOnline=routable
+
+[Network]
+Address=192.168.100.7/24
+DNS=192.168.100.7
+IPv6AcceptRA=yes
+
+[Route]
+Gateway=192.168.100.1
+Metric=600
+
+[IPv6AcceptRA]
+RouteMetric=600
