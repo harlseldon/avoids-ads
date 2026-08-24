@@ -171,10 +171,57 @@ y volver a marcar `Enable Primary DHCP Server` en el ONT.
   conditional forwarding apunta al ONT (`FTLCONF_dns_revServers`) y su tabla de
   DHCP queda vacía al quitarle el servicio. Para los pocos equipos que importen,
   lo práctico es darlos de alta a mano en Pi-hole.
-- **IPv6 sigue sin cubrirse.** El ONT continúa anunciando `fe80::1` como DNS por
-  Router Advertisement, que es un mecanismo aparte del DHCP y no se toca desde
-  aquí. Los clientes que prefieran IPv6 se saltarán el filtro. Mirar
-  `LAN → DHCPv6 Server` en el ONT.
+- **IPv6 no es un pendiente menor: es el bloqueo principal.** Ver abajo.
+
+## IPv6 deja el DHCP sin efecto
+
+Tras montar el DHCP, ningún cliente lo usaba. La causa no era el firewall, ni
+dnsmasq, ni el aislamiento de la wifi — todas se descartaron con capturas. Es
+que **los dispositivos no piden IPv4 en absoluto**.
+
+Captura de 5 minutos en `wlan0` durante dos reconexiones completas de un
+Android, filtrando DHCP y Router Advertisements:
+
+```
+router solicitations:  2     ← el móvil pidiendo red
+router advertisements: 2     ← el ONT contestando
+paquetes DHCPv4:       0     ← ni uno
+```
+
+El teléfono queda con tres direcciones, todas IPv6, ninguna IPv4:
+
+```
+fe80::6489:e6ff:fe84:514f
+2806:2f0:aee0:3b8:6489:e6ff:fe84:514f
+2806:2f0:aee0:3b8:449e:4d69:42f3:565a
+```
+
+El ONT le da prefijo por SLAAC y el DNS (`fe80::1`) dentro del propio Router
+Advertisement. Con eso Android tiene internet completo y nunca llega a pedir
+una dirección IPv4, así que el servidor DHCP —que funciona— no tiene a quién
+servir.
+
+**La solución es apagar el IPv6 de la LAN en el ONT** (`LAN → DHCPv6 Server`).
+Sin RA no hay `fe80::1` como DNS, y los clientes vuelven a pedir IPv4, que es
+donde dnsmasq ya está esperando.
+
+Anunciar nosotros un DNS por IPv6 **no sirve**: el RDNSS viaja dentro del Router
+Advertisement del router, no en el DHCPv6. El ONT seguiría anunciando el suyo y
+los clientes se quedarían con ambos, usando el que les conviniera — bloqueo
+intermitente e imposible de diagnosticar.
+
+### Lo que se descartó por el camino
+
+- **Firewall.** Faltaba `ufw allow in on wlan0 to any port 67 proto udp` y se
+  añadió, pero el silencio siguió. Nota: va sin `route`, porque dnsmasq corre
+  en `network_mode: host` — al revés que el 53 de Tailscale.
+- **Aislamiento de clientes en la wifi.** Descartado: el escaneo ARP ve al resto
+  de dispositivos, y la router solicitation del móvil llega a esta interfaz.
+- **Que el ONT siguiera repartiendo DHCP.** Descartado: la casilla se quedó
+  desmarcada y no la revirtió el ACS.
+- **Concesiones viejas.** Ciertas, pero secundarias: el ONT daba 72 h, así que
+  los equipos conservan direcciones antiguas mucho tiempo. Reconectar la wifi no
+  basta para forzar una petición nueva; hay que *olvidar la red*.
 
 ### Si Pi-hole se cae y el host se queda sin resolver
 
