@@ -102,6 +102,25 @@ stack jellyfin intacto                                          ✓
 responde en la IP de Tailscale, **no** que un peer remoto atraviese el firewall.
 Eso depende del paso 1 y hay que comprobarlo desde otro dispositivo del tailnet.
 
+## Por cable desde el 2026-11-14
+
+El equipo salía por **wifi** (`wlan0`) y ahora sale por **cable** (`enp3s0`,
+1 Gbps). El cambio resuelve las dos cosas que bloqueaban el proyecto:
+
+- **El broadcast IPv4 llega.** Por wifi el AP del ONT no lo propagaba entre
+  estaciones, así que nuestro dnsmasq nunca veía un `DHCPDISCOVER` — ver más
+  abajo. Por cable sí.
+- **Desaparece el adaptador ath10k como punto de fallo.** El 2026-10-24 se
+  colgó: el enlace seguía asociado pero no pasaba nada hacia fuera, y el equipo
+  estuvo **11 h 43 min** sin red, con todos los bots reintentando (158 733
+  SERVFAIL en 9 horas). Solo se recuperó al reiniciar.
+
+⚠️ **Al cablear, la IP pasó a DHCP (`.201`) y Pi-hole quedó inalcanzable desde
+la LAN** sin que se notara, porque por Tailscale seguía respondiendo: los
+sockets de Docker seguían atados a una `192.168.100.7` que ya no existía en
+ninguna interfaz. Se arregló devolviendo la `.7` como IP fija en `enp3s0`; al
+reaparecer la dirección, los sockets revivieron solos sin recrear contenedores.
+
 ## El ONT de Totalplay no deja repartir DNS
 
 El plan original era decirle al router que anunciara `192.168.100.7` como DNS.
@@ -131,11 +150,15 @@ notan porque conservan su concesión.
 dirección de un servidor DHCP que es él mismo:
 
 ```bash
-sudo cp 10-wlan0-static.network /etc/systemd/network/
-sudo networkctl reload && sudo networkctl reconfigure wlan0
-ip -4 -o addr show wlan0     # debe seguir siendo 192.168.100.7/24
+sudo cp 10-enp3s0-static.network /etc/systemd/network/
+sudo systemctl restart systemd-networkd
+ip -4 -o addr show enp3s0    # debe decir 192.168.100.7/24, sin "dynamic"
 ping -c2 192.168.100.1       # y seguir habiendo salida
 ```
+
+> `networkctl reload` **no** sirve: en systemd 261 la llamada varlink se queda
+> colgada hasta agotar el tiempo y rompe cualquier cadena `&&`. Usar
+> `systemctl restart systemd-networkd`.
 
 **2. Quitarle el DHCP al ONT.** En `192.168.100.1` → `LAN` → `DHCP Server`,
 desmarcar **`Enable Primary DHCP Server`** y aplicar. Nada más de esa pantalla.

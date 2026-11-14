@@ -1,0 +1,32 @@
+# IP fija para el servidor, ahora por cable.
+#
+# Sustituye a 10-wlan0-static.network: desde el 2026-11-14 el equipo sale por
+# ethernet (enp3s0, 1 Gbps) y la wifi queda apagada. El cable resuelve dos
+# cosas que la wifi no podía:
+#   · el broadcast IPv4 sí llega, así que el DHCP propio es por fin viable;
+#   · desaparece la dependencia del adaptador ath10k, que se colgó el
+#     2026-10-24 y dejó el equipo doce horas sin red.
+#
+# La dirección tiene que seguir siendo .7: es la que están usando el compose
+# (puertos publicados), la documentación y los clientes de la LAN.
+#
+# Gana sobre 20-ethernet.network por orden lexicográfico: systemd-networkd
+# aplica solo el primer .network que coincide, no los mezcla.
+
+[Match]
+Name=enp3s0
+
+[Link]
+RequiredForOnline=routable
+
+[Network]
+Address=192.168.100.7/24
+DNS=192.168.100.7
+IPv6AcceptRA=yes
+
+[Route]
+Gateway=192.168.100.1
+Metric=100
+
+[IPv6AcceptRA]
+RouteMetric=100
