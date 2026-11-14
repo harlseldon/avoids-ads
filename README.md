@@ -121,6 +121,56 @@ sockets de Docker seguían atados a una `192.168.100.7` que ya no existía en
 ninguna interfaz. Se arregló devolviendo la `.7` como IP fija en `enp3s0`; al
 reaparecer la dirección, los sockets revivieron solos sin recrear contenedores.
 
+## ✅ Funcionando desde el 2026-11-14
+
+El DHCP propio reparte por fin. Primera concesión:
+
+```
+DHCPREQUEST(enp3s0) 192.168.100.156 98:25:4a:bb:c0:32
+DHCPACK(enp3s0)     192.168.100.156 98:25:4a:bb:c0:32 Seldon
+  option 6 dns-server  192.168.100.7     ← Pi-hole
+  option 3 router      192.168.100.1
+```
+
+### La pieza que faltaba: el ONT hace DHCP snooping
+
+Estuvo tres meses sin funcionar por dos causas **encadenadas**, y hasta
+separarlas no se vio ninguna:
+
+1. **Por wifi el broadcast IPv4 no llegaba.** El AP del ONT no lo propaga entre
+   estaciones. Resuelto al pasar a cable.
+2. **Por cable tampoco llegaba... mientras el DHCP del ONT estuviera encendido.**
+   El ONT intercepta las tramas de los puertos 67/68 de los clientes y solo las
+   entrega a su propio puerto — protección anti-servidor-DHCP-pirata.
+
+Lo que lo demostró: con el DHCP del ONT **activo**, una captura de 7 minutos en
+`enp3s0` da **0 paquetes DHCP** mientras sí pasan ARP broadcast de otros
+clientes. Con el DHCP del ONT **apagado**, la petición llega al instante.
+
+Las dos variables se cruzaron durante meses: en agosto se apagó el DHCP del ONT
+pero estábamos en wifi, donde nada llegaba; en noviembre se pasó a cable pero
+con el DHCP del ONT encendido. Solo la combinación **cable + ONT apagado**
+funciona.
+
+### Cómo forzar que un cliente pida DHCP
+
+Las pruebas fallaron varias veces por disparar mal la petición:
+
+- `ipconfig /renew` a secas → **unicast** al servidor conocido; nunca sale en
+  broadcast y nuestro dnsmasq no lo ve. Hace falta `/release` antes.
+- Apagar y encender la wifi en Android → reutiliza la concesión guardada. Hay
+  que **olvidar la red**.
+- Generar la petición desde el propio servidor (`nmap broadcast-dhcp-discover`)
+  → inútil: el broadcast sale por el cable pero no se entrega a los procesos
+  que escuchan localmente en esa interfaz.
+- **Lo que sí funciona:** desenchufar y enchufar el cable del cliente.
+
+### Nota sobre clientes con VPN corporativa
+
+Un equipo con Zscaler (u otro ZTNA) tuneliza su propio DNS: recibirá
+`192.168.100.7` por DHCP pero **no aparecerá en Pi-hole** mientras la VPN esté
+conectada. No es un fallo.
+
 ## El ONT de Totalplay no deja repartir DNS
 
 El plan original era decirle al router que anunciara `192.168.100.7` como DNS.
