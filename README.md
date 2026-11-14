@@ -312,6 +312,7 @@ sudo resolvectl dns wlan0 1.1.1.1
 | StevenBlack/hosts | ~82 k | la de fábrica de Pi-hole |
 | HaGeZi **Multi PRO** | ~224 k | anuncios, rastreo y telemetría |
 | HaGeZi **TIF Medium** | ~360 k | phishing y malware |
+| HaGeZi **DoH** | ~3,5 k | endpoints DNS-over-HTTPS |
 
 **Total: 608 716 dominios únicos.**
 
@@ -367,6 +368,37 @@ Cuidado al comprobar: una respuesta vacía **no** significa bloqueo. `harlseldon
 y `yts.mx` devuelven vacío, pero también desde Cloudflare — simplemente no tienen
 registro A. La comprobación buena es comparar Pi-hole contra un resolver externo,
 o mirar el `status` en la base de FTL (1 = gravity, 4 = regex, 2 = permitido).
+
+## Los navegadores se saltaban Pi-hole con DoH
+
+Síntoma: `caliente.mx` estaba bloqueado y **seguía abriendo en el móvil**, con
+Tailscale encendido o apagado, daba igual. En el registro de Pi-hole **no había
+ni una consulta** de ese dominio.
+
+Causa: **Firefox resuelve por su cuenta con DNS-over-HTTPS**, cifrando las
+consultas hacia Cloudflare y saltándose el DNS del sistema. Por eso los
+servicios de Android sí pasaban por Pi-hole y lo navegado no. Que Tailscale
+estuviera encendido no cambiaba nada: Tailscale decide qué DNS usa el
+*sistema*, y Firefox no usa el del sistema.
+
+Lo delató el propio registro — el arranque de DoH sí pasa por el DNS normal:
+
+```
+100.112.17.58   cloudflare-dns.com          15 consultas   ← el Android
+100.90.4.57     mozilla.cloudflare-dns.com  40 consultas   ← Firefox de escritorio
+```
+
+Solución: la lista **`adblock/doh.txt`** de HaGeZi. Si el navegador no alcanza
+su endpoint de DoH, se rinde y vuelve al DNS del sistema — a Pi-hole.
+
+⚠️ **NO usar `doh-vpn-proxy-bypass.txt`.** Comprobado: bloquea `tailscale.com`
+y `nordvpn.com`, lo que tumbaría el filtrado remoto y el VPN de los torrents.
+La `doh.txt` solo toca `dns1/dns2.nordvpn.com` (los DNS de NordVPN, no su
+infraestructura — gluetun conecta por IP) y no incluye Tailscale.
+
+Y no nos deja sin resolución a nosotros: el `Corefile` reenvía a `tls://1.1.1.1`
+**por IP**, usando `cloudflare-dns.com` solo como `tls_servername` para validar
+el certificado. Nunca resuelve ese nombre.
 
 ## Ruido de DNSSEC en los avisos
 
