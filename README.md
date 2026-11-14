@@ -370,6 +370,33 @@ y `yts.mx` devuelven vacío, pero también desde Cloudflare — simplemente no t
 registro A. La comprobación buena es comparar Pi-hole contra un resolver externo,
 o mirar el `status` en la base de FTL (1 = gravity, 4 = regex, 2 = permitido).
 
+## IPv6 apagado en el ONT (2026-11-14)
+
+Con el DHCP propio funcionando quedaba una fuga: el ONT seguía anunciándose
+como DNS por IPv6 (`fe80::1`, en el Router Advertisement), y ese DNS no filtra:
+
+```
+caliente.mx       Pi-hole → 0.0.0.0     ONT por IPv6 → 104.18.43.240
+```
+
+Cada equipo recibía los dos servidores y usaba cualquiera — bloqueo
+intermitente. Se desmarcó `Enable Route Advertisement` y `Enable DHCPv6 Server`
+en `LAN → DHCPv6 Server`. En agosto eso dejó la casa sin red porque nuestro
+DHCP aún no llegaba a nadie; ahora los equipos caen a IPv4 y a Pi-hole.
+
+Dos matices para no confundirse al comprobarlo:
+
+- **El ONT sigue respondiendo DNS en `fe80::1`** si le preguntas directamente.
+  Lo que se apagó es el *anuncio*: ningún equipo se entera de que existe.
+  Por eso `check.sh` lo verifica con una solicitud de router (`rdisc6`), no
+  con una consulta DNS.
+- **Lo ya aprendido caduca solo.** La ruta IPv6 y el `fe80::1` en la lista de
+  DNS de cada equipo duran hasta que vence su vida útil (~30 min) o el equipo
+  se reconecta.
+
+⚠️ En agosto este ajuste **volvió solo tras un reinicio del ONT**. `check.sh`
+lo vigila.
+
 ## Los navegadores se saltaban Pi-hole con DoH
 
 Síntoma: `caliente.mx` estaba bloqueado y **seguía abriendo en el móvil**, con

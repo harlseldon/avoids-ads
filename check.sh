@@ -34,9 +34,15 @@ off=$(docker run --rm --net=host --cap-add=NET_ADMIN --cap-add=NET_RAW alpine sh
   'apk add -q nmap nmap-scripts >/dev/null 2>&1; timeout 40 nmap --script broadcast-dhcp-discover -e enp3s0 2>&1' \
   | grep -c 'Server Identifier: 192.168.100.1')
 [ "$off" = 0 ] && ok "el DHCP del ONT sigue apagado" || bad "el ONT volvió a repartir DHCP — la casa dejó de usar Pi-hole"
-leak=$(docker run --rm --net=host alpine nslookup -type=a caliente.mx fe80::1%enp3s0 2>/dev/null | awk '/^Address: /{a=$2} END{print a}')
-[ -z "$leak" ] || [ "$leak" = 0.0.0.0 ] && ok "el ONT no ofrece DNS por IPv6" \
-  || warn "el ONT anuncia DNS por IPv6 (fe80::1) y no filtra: los equipos que lo usen se saltan Pi-hole"
+# Lo que importa es si el ONT se ANUNCIA por IPv6 (Router Advertisement con su
+# DNS), no si responde: aunque deje de anunciarse, sigue contestando DNS en
+# fe80::1 a quien le pregunte directamente. rdisc6 sale con 0 si recibe un RA.
+if docker run --rm --net=host --cap-add=NET_ADMIN --cap-add=NET_RAW alpine sh -c \
+    'apk add -q ndisc6 >/dev/null 2>&1; rdisc6 -1 -w 3000 -r 3 enp3s0' >/dev/null 2>&1; then
+  warn "el ONT anuncia IPv6: los equipos reciben fe80::1 como DNS y se saltan Pi-hole (LAN → DHCPv6 Server)"
+else
+  ok "el ONT no anuncia IPv6 (sin fuga de DNS por fe80::1)"
+fi
 
 echo "Equipos de la LAN (últimas 24 h)"
 for ip in $(docker run --rm --net=host --cap-add=NET_RAW --cap-add=NET_ADMIN alpine sh -c \
