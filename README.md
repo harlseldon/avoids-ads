@@ -328,10 +328,29 @@ Pi-hole.
 
 ### Bloqueos manuales
 
-`calient.mx` y `caliente.mx`, ambos como comodín, así que cubren subdominios
-(`apuestas.caliente.mx` también cae). Se bloquearon los dos porque el corto
-`calient.mx` es el que aparece en los anuncios y el largo es el sitio de
-apuestas. Para quitar uno:
+```
+(\.|^)calient\.mx$              el corto que sale en los anuncios
+(\.|^)caliente\.mx$             el sitio de apuestas
+(^|\.)caliente[a-z0-9-]*\.      toda la familia de la marca
+(\.|^)orocasino\.mx$            otro casino
+(^|\.)downloads77-windows\..*$  PERMITIR — ver abajo
+```
+
+**Ojo con las marcas que usan varios dominios.** `caliente.mx` estaba bloqueado
+pero **`calientecasino.com.mx` seguía abriendo**: es un dominio distinto, no un
+subdominio, así que la regla con `$` no lo alcanzaba. De ahí la tercera regla,
+que cubre cualquier dominio cuya etiqueta empiece por `caliente` — incluidas las
+variantes que registren mañana.
+
+**Y una regla de PERMITIR.** Los 14 dominios `downloads77-windows.*` con nombres
+aleatorios (`my1337jog.run`, `p99nxpivfscyverz.me`…) **no son malware**: todos
+son CNAME a `*.rsc.cdn77.org` y uno es `downloads77-windows.nordcdn.com`. Es el
+cliente de **NordVPN** usando su mecanismo de resistencia a la censura —
+dominios que no parecen suyos a propósito. HaGeZi bloqueaba uno de los 14, y eso
+hacía que el cliente fuera dando tumbos por su lista de respaldo: 435 554
+consultas en dos meses. La regla de permitir corta ese derroche.
+
+Para quitar una regla:
 
 ```bash
 docker exec pihole pihole --regex --delete '(\.|^)calient\.mx$'
