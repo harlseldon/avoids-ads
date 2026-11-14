@@ -114,9 +114,27 @@ services:
       FTLCONF_dns_upstreams: '${DOH_IP}#5053'
       FTLCONF_dns_dnssec: 'true'
 
-      # Conditional forwarding: pregunta al router por los nombres de la LAN,
-      # así el dashboard muestra "telefono-ana" y no "192.168.100.34".
-      FTLCONF_dns_revServers: 'true,${LAN_SUBNET},${ROUTER_IP},lan'
+      # Nombres de cada equipo (IP → nombre). Sustituye al conditional forwarding
+      # hacia el ONT, que dejó de servir al apagarle el DHCP: su tabla de
+      # clientes está vacía, y además generaba los avisos de DNSSEC por
+      # 168.192.in-addr.arpa. Las IP de la LAN son fijas gracias a las reservas
+      # dhcp-host de dnsmasq.conf; las de Tailscale ya lo eran.
+      FTLCONF_dns_hosts: |-
+        192.168.100.1 ont-totalplay
+        192.168.100.7 omarchy
+        192.168.100.9 google-9
+        192.168.100.45 halicarnasus
+        192.168.100.90 seldon-android
+        192.168.100.133 mac
+        192.168.100.136 movil-136
+        192.168.100.156 dell
+        192.168.100.230 fnlink-230
+        100.90.4.57 omarchy-ts
+        100.101.59.11 dell-ts
+        100.112.132.40 mac-ts
+        100.112.17.58 seldon-android-ts
+        100.108.8.49 dads-phone-ts
+        100.116.104.44 rigels-tablet-ts
 
       # Las respuestas DNSSEC superan los 512 B; 1232 es el tamaño recomendado
       # por el DNS Flag Day 2020 para no depender de fragmentación IP.

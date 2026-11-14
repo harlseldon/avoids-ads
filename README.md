@@ -241,10 +241,8 @@ y volver a marcar `Enable Primary DHCP Server` en el ONT.
   **y** sin repartir direcciones. Antes el ONT hacía de colchón. Se aceptó a
   conciencia a cambio de cubrir la casa entera.
 - **Depende de la wifi**, porque este equipo entra por `wlan0`, no por cable.
-- **Los clientes salen como IP, no como nombre**, en el panel de Pi-hole. El
-  conditional forwarding apunta al ONT (`FTLCONF_dns_revServers`) y su tabla de
-  DHCP queda vacía al quitarle el servicio. Para los pocos equipos que importen,
-  lo práctico es darlos de alta a mano en Pi-hole.
+- ~~Los clientes salen como IP, no como nombre~~ — resuelto, ver
+  [Nombres de los equipos](#nombres-de-los-equipos).
 - **IPv6 no es un pendiente menor: es el bloqueo principal.** Ver abajo.
 
 ## IPv6 deja el DHCP sin efecto
@@ -369,6 +367,39 @@ Cuidado al comprobar: una respuesta vacía **no** significa bloqueo. `harlseldon
 y `yts.mx` devuelven vacío, pero también desde Cloudflare — simplemente no tienen
 registro A. La comprobación buena es comparar Pi-hole contra un resolver externo,
 o mirar el `status` en la base de FTL (1 = gravity, 4 = regex, 2 = permitido).
+
+## Nombres de los equipos
+
+El panel muestra `dell`, `mac-ts`, `halicarnasus`… en vez de IPs. Tres piezas,
+y un nombre nuevo hay que tocarlo en las tres:
+
+| Dónde | Qué hace |
+|---|---|
+| `dnsmasq.conf` → `dhcp-host=MAC,IP,nombre` | cada equipo recibe siempre la misma IP |
+| `docker-compose.yml` → `FTLCONF_dns_hosts` | Pi-hole traduce esa IP a un nombre (Query Log, Top clients) |
+| Panel → *Group management → Clients* | descripción larga y grupo de bloqueo |
+
+Las IP de Tailscale van con sufijo `-ts`: son el mismo equipo entrando por
+otro camino, y por ahí llega la mayor parte del tráfico de los portátiles.
+
+Por qué así y no por MAC: en red `bridge` Pi-hole no ve las MAC de la LAN, solo
+IPs. Por eso hacen falta las reservas — sin IP fija, el nombre se perdería al
+renovar.
+
+Esto sustituye al **conditional forwarding** hacia el ONT
+(`FTLCONF_dns_revServers`), que se quitó: con el DHCP del ONT apagado su tabla
+de clientes está vacía, y además generaba ~3 000 consultas por hora a
+`168.192.in-addr.arpa` y los avisos de DNSSEC. Tras quitarlo: cero.
+
+Notas:
+
+- **Colisión de hostnames.** El PC y el Android se anunciaban los dos como
+  `Seldon`; dnsmasq solo daba el nombre al primero. Las reservas lo resuelven.
+- **MAC aleatorias** (segundo dígito 2/6/A/E: `66:…`, `7a:…`, `b2:…`) son la
+  "dirección privada" de móviles y Macs. Si el equipo la rota, la reserva deja
+  de coincidir: fijar *Dirección privada → Fija* para esta red.
+- **`::` no es un equipo**: es Pi-hole mismo, haciendo las consultas internas
+  de la validación DNSSEC (`com`, `net`, `org`…).
 
 ## IPv6 apagado en el ONT (2026-11-14)
 

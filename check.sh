@@ -49,7 +49,7 @@ for ip in $(docker run --rm --net=host --cap-add=NET_RAW --cap-add=NET_ADMIN alp
     'apk add -q nmap >/dev/null 2>&1; nmap -sn -PR 192.168.100.0/24 2>&1' | grep -oE '192\.168\.100\.[0-9]+' | sort -t. -k4 -n -u); do
   [ "$ip" = 192.168.100.1 ] || [ "$ip" = "$P" ] && continue
   r=$(sql "select count(*)||' consultas, '||coalesce(sum(status in (1,4,5,9,10,11)),0)||' bloqueadas' from queries where client='$ip' and timestamp > strftime('%s','now','-24 hours');")
-  n=$(awk -v i="$ip" '$3==i && $4!="*"{print $4}' dhcp-leases/dnsmasq.leases 2>/dev/null)
+  n=$(docker exec pihole dig -x "$ip" @127.0.0.1 +short 2>/dev/null | sed 's/\.$//')
   case "$r" in 0\ *) warn "$ip ${n:+($n) }no ha consultado a Pi-hole — concesión vieja del ONT o DNS propio" ;;
                *)    ok   "$ip ${n:+($n) }$r" ;; esac
 done
