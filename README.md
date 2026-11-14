@@ -17,6 +17,7 @@ cliente LAN ──udp/53──▶ 192.168.100.7 ──▶ [pihole] ──▶ [co
 | Contraseña | en `.env` (`PIHOLE_PASSWORD`), generada aleatoria, fuera de git |
 | DNS a repartir | `192.168.100.7` |
 | Arriba/abajo | `docker compose up -d` / `docker compose down` |
+| **¿Está filtrando?** | `./check.sh` — ✓/✗/⚠ de punta a punta, ~1 min |
 
 ## El hallazgo que define este diseño
 
